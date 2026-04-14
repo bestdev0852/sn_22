@@ -180,7 +180,7 @@ class StreamMiner(ABC):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.subtensor_lock = threading.Lock()  # Protect WebSocket access from multiple threads
         self.request_timestamps: Dict = {}
 
     @abstractmethod
@@ -447,15 +447,18 @@ class StreamMiner(ABC):
                     bt.logging.debug("Skipping first metagraph sync")
                     first_run = False
                 else:
-                    self.metagraph.sync(subtensor=self.subtensor)
-                    bt.logging.info("Resynced metagraph in background")
+                    # Use lock to prevent concurrent WebSocket access
+                    with self.subtensor_lock:
+                        self.metagraph.sync(subtensor=self.subtensor)
+                        bt.logging.info("Resynced metagraph in background")
                 time.sleep(900)
             except Exception as e:
                 bt.logging.error(f"Error during metagraph sync: {e}")
 
                 try:
-                    self.subtensor = bt.Subtensor(config=self.config)
-                    self.metagraph = self.subtensor.metagraph(self.config.netuid)
+                    with self.subtensor_lock:
+                        self.subtensor = bt.Subtensor(config=self.config)
+                        self.metagraph = self.subtensor.metagraph(self.config.netuid)
                 except Exception as e:
                     bt.logging.error(
                         f"Error during metagraph sync - reconnection to subtensor also failed: {e}"
@@ -496,26 +499,28 @@ class StreamMiner(ABC):
         try:
             while not self.should_exit:
                 # --- Wait until next epoch.
-                current_block = self.subtensor.get_current_block()
+                with self.subtensor_lock:
+                    current_block = self.subtensor.get_current_block()
                 while (
                     current_block - self.last_epoch_block
                     < self.config.miner.blocks_per_epoch
                 ):
                     # --- Wait for next bloc.
                     time.sleep(60)
-                    current_block = self.subtensor.get_current_block()
+                    with self.subtensor_lock:
+                        current_block = self.subtensor.get_current_block()
                     # --- Check if we should exit.
                     if self.should_exit:
                         break
 
                 # --- Update the metagraph with the latest network state.
-                self.last_epoch_block = self.subtensor.get_current_block()
-
-                metagraph = self.subtensor.metagraph(
-                    netuid=self.config.netuid,
-                    lite=True,
-                    block=self.last_epoch_block,
-                )
+                with self.subtensor_lock:
+                    self.last_epoch_block = self.subtensor.get_current_block()
+                    metagraph = self.subtensor.metagraph(
+                        netuid=self.config.netuid,
+                        lite=True,
+                        block=self.last_epoch_block,
+                    )
                 # log = (
                 #     f"Step:{step} | "
                 #     f"Block:{metagraph.block.item()} | "

@@ -16,6 +16,8 @@ wandb/
 venv/
 .idea/
 
+.env
+
 state.json
 
 app.config.js

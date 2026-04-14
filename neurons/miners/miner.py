@@ -122,13 +122,17 @@ class StreamMiner(ABC):
             self.axon = axon
         elif self.config.axon.external_ip is not None:
             bt.logging.debug(
-                f"Starting axon on port {self.config.axon.port} and external ip {self.config.axon.external_ip}"
+                f"Starting axon on port {self.config.axon.port} and external ip {self.config.axon.external_ip}" +
+                (f" (external port: {self.config.axon.external_port})" if self.config.axon.external_port else "")
             )
-            self.axon = bt.Axon(
-                wallet=self.wallet,
-                port=self.config.axon.port,
-                external_ip=self.config.axon.external_ip,
-            )
+            axon_kwargs = {
+                "wallet": self.wallet,
+                "port": self.config.axon.port,
+                "external_ip": self.config.axon.external_ip,
+            }
+            if self.config.axon.external_port is not None:
+                axon_kwargs["external_port"] = self.config.axon.external_port
+            self.axon = bt.Axon(**axon_kwargs)
         else:
             bt.logging.debug(f"Starting axon on port {self.config.axon.port}")
             self.axon = bt.Axon(wallet=self.wallet, port=self.config.axon.port)

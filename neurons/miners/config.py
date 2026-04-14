@@ -37,6 +37,13 @@ def get_config() -> "bt.Config":
         default=bt.utils.networking.get_external_ip(),
         help="IP for the metagraph",
     )
+    # External Port (for port forwarding scenarios like Vast.ai)
+    parser.add_argument(
+        "--axon.external_port",
+        type=int,
+        default=None,
+        help="External port to advertise (different from internal port when using port forwarding)",
+    )
     # Subtensor network to connect to
     parser.add_argument(
         "--subtensor.network",

@@ -68,6 +68,8 @@ python -m neurons/miners/miner.py
     --axon.port 14000
 ```
 
+**For cloud providers like Vast.ai with port forwarding, see [Running on Vast.ai](./docs/running_on_vast_ai.md)**
+
 # Running the Validator API with Automatic Updates
 
 These validators are designed to run and update themselves automatically. To run a validator, follow these steps:

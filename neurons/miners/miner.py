@@ -12,6 +12,7 @@ from typing import Dict, Tuple
 
 import bittensor as bt
 from openai import OpenAI
+from dotenv import load_dotenv
 
 # ADD REDIS AND WANDB IMPORTS
 import redis
@@ -28,7 +29,6 @@ root = Path(__file__).resolve().parents[2]  # /workspace/sn_22
 sys.path.insert(0, str(root))
 
 
-from dotenv import load_dotenv
 
 load_dotenv()
 

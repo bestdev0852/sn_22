@@ -20,6 +20,13 @@ try:
 except ImportError:
     wandb = None
 
+import sys
+from pathlib import Path
+
+# Add workspace root to Python path
+root = Path(__file__).resolve().parents[2]  # /workspace/sn_22
+sys.path.insert(0, str(root))
+
 import desearch
 from desearch.protocol import (
     IsAlive,

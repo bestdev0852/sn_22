@@ -13,6 +13,13 @@ from typing import Dict, Tuple
 import bittensor as bt
 from openai import OpenAI
 
+# ADD REDIS AND WANDB IMPORTS
+import redis
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 import desearch
 from desearch.protocol import (
     IsAlive,
@@ -39,7 +46,6 @@ if not TWITTER_BEARER_TOKEN:
         "Please set the TWITTER_BEARER_TOKEN environment variable. See here: https://github.com/Desearch-ai/subnet-22/blob/main/docs/env_variables.md"
     )
 
-
 class StreamMiner(ABC):
     def __init__(self, config=None, axon=None, wallet=None, subtensor=None):
         bt.logging.info("starting stream miner")
@@ -47,7 +53,28 @@ class StreamMiner(ABC):
         self.config = self.config()
         self.config.merge(base_config)
         check_config(StreamMiner, self.config)
-        bt.logging.info(self.config)  # TODO: duplicate print?
+        bt.logging.info(self.config)
+        
+        # ADD REDIS CLIENT
+        try:
+            self.redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+            self.redis_client.ping()
+            bt.logging.info("Redis client connected successfully")
+        except Exception as e:
+            self.redis_client = None
+            bt.logging.warning(f"Redis connection failed: {e}")
+        
+        # ADD WANDB
+        self.wandb = None
+        if wandb and os.environ.get("WANDB_API_KEY"):
+            try:
+                wandb.login(key=os.environ.get("WANDB_API_KEY"))
+                self.wandb = wandb
+                self.wandb.init(project="desearch-miner", config={"netuid": self.config.netuid})
+                bt.logging.info("WandB initialized successfully")
+            except Exception as e:
+                bt.logging.warning(f"WandB initialization failed: {e}")
+        
         self.prompt_cache: Dict[str, Tuple[str, int]] = {}
         self.request_timestamps = {}
 
@@ -145,25 +172,116 @@ class StreamMiner(ABC):
     def _smart_scraper(
         self, synapse: ScraperStreamingSynapse
     ) -> ScraperStreamingSynapse:
-        return self.smart_scraper(synapse)
+        start_time = time.time()
+        try:
+            result = self.smart_scraper(synapse)
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("smart_scraper", latency, synapse.dendrite.hotkey)
+            return result
+        except Exception as e:
+            bt.logging.error(f"Smart scraper error: {e}")
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("smart_scraper_error", latency, synapse.dendrite.hotkey)
+            return synapse
 
     async def _twitter_search(
         self, synapse: TwitterSearchSynapse
     ) -> TwitterSearchSynapse:
-        return await self.twitter_search(synapse)
+        start_time = time.time()
+        try:
+            result = await self.twitter_search(synapse)
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_search", latency, synapse.dendrite.hotkey)
+            return result
+        except Exception as e:
+            bt.logging.error(f"Twitter search error: {e}")
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_search_error", latency, synapse.dendrite.hotkey)
+            return synapse
 
     async def _twitter_id_search(
         self, synapse: TwitterIDSearchSynapse
     ) -> TwitterIDSearchSynapse:
-        return await self.twitter_id_search(synapse)
+        start_time = time.time()
+        try:
+            result = await self.twitter_id_search(synapse)
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_id_search", latency, synapse.dendrite.hotkey)
+            return result
+        except Exception as e:
+            bt.logging.error(f"Twitter ID search error: {e}")
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_id_search_error", latency, synapse.dendrite.hotkey)
+            return synapse
 
     async def _twitter_urls_search(
         self, synapse: TwitterURLsSearchSynapse
     ) -> TwitterURLsSearchSynapse:
-        return await self.twitter_urls_search(synapse)
+        start_time = time.time()
+        try:
+            result = await self.twitter_urls_search(synapse)
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_urls_search", latency, synapse.dendrite.hotkey)
+            return result
+        except Exception as e:
+            bt.logging.error(f"Twitter URLs search error: {e}")
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("twitter_urls_search_error", latency, synapse.dendrite.hotkey)
+            return synapse
 
     async def _web_search(self, synapse: WebSearchSynapse) -> WebSearchSynapse:
-        return await self.web_search(synapse)
+        start_time = time.time()
+        try:
+            result = await self.web_search(synapse)
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("web_search", latency, synapse.dendrite.hotkey)
+            return result
+        except Exception as e:
+            bt.logging.error(f"Web search error: {e}")
+            latency = (time.time() - start_time) * 1000
+            self.log_metrics("web_search_error", latency, synapse.dendrite.hotkey)
+            return synapse
+
+    def log_metrics(self, synapse_type: str, latency: float, hotkey: str):
+        """Log metrics to WandB and print for PM2 monitoring"""
+        if self.wandb:
+            try:
+                self.wandb.log({
+                    "synapse_type": synapse_type,
+                    "latency_ms": latency,
+                    "uid": self.my_subnet_uid,
+                    "hotkey": hotkey[:8]
+                })
+            except:
+                pass
+        
+        bt.logging.info(f"{synapse_type} latency: {latency:.2f}ms hotkey: {hotkey[:8]}")
+
+    def get_redis_cache(self, synapse, prefix: str, ttl: int = 3600) -> str:
+        """Check Redis cache for synapse"""
+        if not self.redis_client:
+            return None
+        
+        cache_key = f"{prefix}:{hash(str(synapse))}"
+        try:
+            cached = self.redis_client.get(cache_key)
+            if cached:
+                bt.logging.debug(f"Cache HIT: {cache_key}")
+                return cached
+        except Exception as e:
+            bt.logging.warning(f"Redis cache get error: {e}")
+        return None
+
+    def set_redis_cache(self, synapse, prefix: str, result: str, ttl: int = 3600):
+        """Set Redis cache for synapse result"""
+        if not self.redis_client:
+            return
+        try:
+            cache_key = f"{prefix}:{hash(str(synapse))}"
+            self.redis_client.setex(cache_key, ttl, result)
+            bt.logging.debug(f"Cache SET: {cache_key}")
+        except Exception as e:
+            bt.logging.warning(f"Redis cache set error: {e}")
 
     def base_blacklist(self, synapse, blacklist_amt=20000) -> Tuple[bool, str]:
         try:
@@ -172,15 +290,6 @@ class StreamMiner(ABC):
 
             if hotkey in desearch.BLACKLISTED_KEYS:
                 return True, f"Blacklisted a {synapse_type} request from {hotkey}"
-
-            # if hotkey in desearch.WHITELISTED_KEYS:
-            #     return False, f"accepting {synapse_type} request from {hotkey}"
-
-            # if hotkey not in desearch.valid_validators:
-            #     return (
-            #         True,
-            #         f"Blacklisted a {synapse_type} request from a non-valid hotkey: {hotkey}",
-            #     )
 
             uid = None
             axon = None
@@ -199,7 +308,6 @@ class StreamMiner(ABC):
             if self.config.subtensor.network == "finney":
                 # check the stake
                 tao = self.metagraph.neurons[uid].stake.tao
-                # metagraph.neurons[uid].S
                 if tao < blacklist_amt:
                     return (
                         True,
@@ -284,11 +392,6 @@ class StreamMiner(ABC):
     @classmethod
     @abstractmethod
     def add_args(cls, parser: argparse.ArgumentParser): ...
-
-    async def _smart_scraper(
-        self, synapse: ScraperStreamingSynapse
-    ) -> ScraperStreamingSynapse:
-        return self.smart_scraper(synapse)
 
     def _is_alive(self, synapse: IsAlive) -> IsAlive:
         bt.logging.info("answered to be active")
@@ -442,7 +545,6 @@ class StreamMiner(ABC):
     def __exit__(self, exc_type, exc_value, traceback):
         self.stop_run_thread()
 
-
 class StreamingTemplateMiner(StreamMiner):
     def config(self) -> "bt.Config":
         parser = argparse.ArgumentParser(description="Streaming Miner Configs")
@@ -456,36 +558,100 @@ class StreamingTemplateMiner(StreamMiner):
         self, synapse: ScraperStreamingSynapse
     ) -> ScraperStreamingSynapse:
         bt.logging.info(f"started processing for synapse {synapse}")
+        
+        # CHECK REDIS CACHE FIRST
+        cached = self.get_redis_cache(synapse, "scraper")
+        if cached:
+            synapse.completion = cached
+            return synapse
+        
         tw_miner = ScraperMiner(self)
         token_streamer = partial(tw_miner.smart_scraper, synapse)
-        return synapse.create_streaming_response(token_streamer)
+        result = synapse.create_streaming_response(token_streamer)
+        
+        # CACHE RESULT
+        if result.completion:
+            self.set_redis_cache(synapse, "scraper", result.completion)
+        
+        return result
 
     async def twitter_search(
         self, synapse: TwitterSearchSynapse
     ) -> TwitterSearchSynapse:
         bt.logging.info(f"started processing for twitter search synapse {synapse}")
+        
+        # CHECK REDIS CACHE FIRST
+        cached = self.get_redis_cache(synapse, "twitter_search")
+        if cached:
+            synapse.completion = cached
+            return synapse
+        
         twitter_search_miner = TwitterSearchMiner(self)
-        return await twitter_search_miner.search(synapse)
+        result = await twitter_search_miner.search(synapse)
+        
+        # CACHE RESULT
+        if result.completion:
+            self.set_redis_cache(synapse, "twitter_search", result.completion)
+        
+        return result
 
     async def twitter_id_search(
         self, synapse: TwitterIDSearchSynapse
     ) -> TwitterIDSearchSynapse:
         bt.logging.info(f"started processing for search ID synapse {synapse}")
+        
+        # CHECK REDIS CACHE FIRST
+        cached = self.get_redis_cache(synapse, "twitter_id")
+        if cached:
+            synapse.completion = cached
+            return synapse
+        
         twitter_search_miner = TwitterSearchMiner(self)
-        return await twitter_search_miner.search_by_id(synapse)
+        result = await twitter_search_miner.search_by_id(synapse)
+        
+        # CACHE RESULT
+        if result.completion:
+            self.set_redis_cache(synapse, "twitter_id", result.completion)
+        
+        return result
 
     async def twitter_urls_search(
         self, synapse: TwitterURLsSearchSynapse
     ) -> TwitterURLsSearchSynapse:
         bt.logging.info(f"started processing for search URL synapse {synapse}")
+        
+        # CHECK REDIS CACHE FIRST
+        cached = self.get_redis_cache(synapse, "twitter_urls")
+        if cached:
+            synapse.completion = cached
+            return synapse
+        
         twitter_search_miner = TwitterSearchMiner(self)
-        return await twitter_search_miner.search_by_urls(synapse)
+        result = await twitter_search_miner.search_by_urls(synapse)
+        
+        # CACHE RESULT
+        if result.completion:
+            self.set_redis_cache(synapse, "twitter_urls", result.completion)
+        
+        return result
 
     async def web_search(self, synapse: WebSearchSynapse) -> WebSearchSynapse:
         bt.logging.info(f"started processing for Web search  synapse {synapse}")
+        
+        # CHECK REDIS CACHE FIRST
+        cached = self.get_redis_cache(synapse, "web_search")
+        if cached:
+            synapse.completion = cached
+            return synapse
+        
         web_search_miner = WebSearchMiner(self)
-        return await web_search_miner.search(synapse)
-
+        result = await web_search_miner.search(synapse)
+        
+        # CACHE RESULT
+        if result.completion:
+            self.set_redis_cache(synapse, "web_search", result.completion)
+        
+        return result
 
 if __name__ == "__main__":
     with StreamingTemplateMiner():

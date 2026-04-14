@@ -4,10 +4,6 @@ from distutils.util import strtobool
 
 import bittensor as bt
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 def str2bool(v):
     return bool(strtobool(v))
 

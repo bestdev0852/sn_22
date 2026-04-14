@@ -27,6 +27,12 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]  # /workspace/sn_22
 sys.path.insert(0, str(root))
 
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
 import desearch
 from desearch.protocol import (
     IsAlive,
